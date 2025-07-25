@@ -1,3 +1,4 @@
+# app.py (versión corregida con simulación de respuesta en el mismo hilo)
 from flask import Flask, request, Response
 from twilio.twiml.messaging_response import MessagingResponse
 from unidecode import unidecode
@@ -292,3 +293,25 @@ def webhook():
     except Exception as e:
         logging.exception("❌ Error en webhook:")
         return Response("Error interno", status=500)
+
+def iniciar_tunel_localtunnel():
+    print("⏳ Iniciando LocalTunnel...")
+    npx_path = r"C:\Program Files\nodejs\npx.cmd"  # Asegúrate de que esta ruta sea correcta para tu sistema
+    proceso = subprocess.Popen(
+        [npx_path, "lt", "--port", "5000"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        universal_newlines=True
+    )
+    for linea in proceso.stdout:
+        print(linea.strip())
+        match = re.search(r"https://[a-zA-Z0-9\-]+\.loca\.lt", linea)
+        if match:
+            print(f"\n✅ URL pública definitiva para Twilio: {match.group(0)}/webhook\n")
+            break
+
+if __name__ == "__main__":
+    threading.Thread(target=iniciar_tunel_localtunnel, daemon=True).start()
+    time.sleep(3)
+    print("🚀 NOVA está lista para recibir mensajes...")
+    app.run(port=5000, debug=False)

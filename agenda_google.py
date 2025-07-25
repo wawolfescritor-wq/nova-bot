@@ -1,9 +1,10 @@
-# agenda_google.py
+# agenda_google.py (versión corregida)
 
-from google.oauth2 import service_account
+from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 from datetime import datetime, timedelta
 import pytz
+import os
 from config import SERVICE_ACCOUNT_FILE, CALENDAR_ID, TIMEZONE
 from log import logger
 
@@ -13,33 +14,53 @@ TZ = pytz.timezone(TIMEZONE)
 SCOPES = ['https://www.googleapis.com/auth/calendar']
 
 def get_service():
+    """
+    Crea y devuelve el cliente de la API de Calendar.
+    """
+    creds = Credentials.from_service_account_file(
+        SERVICE_ACCOUNT_FILE,
+        scopes=SCOPES
+    )
+    return build('calendar', 'v3', credentials=creds)
+
+def verificar_ocupado(service, inicio, fin):
     try:
-        creds = service_account.Credentials.from_service_account_file(
-            SERVICE_ACCOUNT_FILE, scopes=SCOPES
-        )
-        return build('calendar', 'v3', credentials=creds)
+        eventos = service.events().list(
+            calendarId=CALENDAR_ID,
+            timeMin=inicio.isoformat(),
+            timeMax=fin.isoformat(),
+            singleEvents=True,
+            orderBy='startTime'
+        ).execute()
+        return len(eventos.get('items', [])) > 0
     except Exception as e:
-        logger.error(f"❌ Error al iniciar servicio de Calendar: {e}")
-        return None
+        logger.error(f"❌ Error verificando ocupación: {e}")
+        return True  # Por seguridad asumimos ocupado si falla
 
-service = get_service()
+def buscar_espacio_disponible(service=None, inicio=None, duracion_min=30):
+    """
+    Ahora acepta un servicio y un inicio.
+    Si no recibimos service o inicio, crea uno nuevo y usa la hora actual.
+    """
+    if service is None:
+        service = get_service()
+    if inicio is None:
+        ahora = datetime.now(TZ)
+        # redondear próximos 15 minutos
+        minutos = (15 - ahora.minute % 15) % 15
+        inicio = ahora + timedelta(minutes=minutos)
+        inicio = inicio.replace(second=0, microsecond=0)
+    else:
+        inicio = inicio.astimezone(TZ)
 
-def buscar_espacio_disponible(duracion_min=30):
-    if not service:
-        return None, None
-
-    ahora = datetime.now(TZ)
-    ahora += timedelta(minutes=15 - ahora.minute % 15)
-    ahora = ahora.replace(second=0, microsecond=0)
-
-    if ahora.hour >= 18:
-        ahora += timedelta(days=1)
-        ahora = ahora.replace(hour=10, minute=0)
-
-    fin_rango = ahora.replace(hour=18, minute=0)
+    fin_rango = inicio.replace(hour=18, minute=0)
+    if inicio.hour >= 18:
+        # pasamos al día siguiente a las 10:00
+        inicio = (inicio + timedelta(days=1)).replace(hour=10, minute=0)
+        fin_rango = inicio.replace(hour=18, minute=0)
 
     body = {
-        "timeMin": ahora.isoformat(),
+        "timeMin": inicio.isoformat(),
         "timeMax": fin_rango.isoformat(),
         "items": [{"id": CALENDAR_ID}]
     }
@@ -48,22 +69,19 @@ def buscar_espacio_disponible(duracion_min=30):
         respuesta = service.freebusy().query(body=body).execute()
         ocupados = respuesta["calendars"][CALENDAR_ID]["busy"]
 
-        inicio = ahora
-        while inicio + timedelta(minutes=duracion_min) <= fin_rango:
-            fin = inicio + timedelta(minutes=duracion_min)
-
+        slot = inicio
+        while slot + timedelta(minutes=duracion_min) <= fin_rango:
+            end_slot = slot + timedelta(minutes=duracion_min)
             libre = all(
                 not (
-                    inicio < TZ.localize(datetime.fromisoformat(o["end"]).replace(tzinfo=None)) and
-                    fin > TZ.localize(datetime.fromisoformat(o["start"]).replace(tzinfo=None))
+                    slot < datetime.fromisoformat(o["end"]).astimezone(TZ) and
+                    end_slot > datetime.fromisoformat(o["start"]).astimezone(TZ)
                 )
                 for o in ocupados
             )
-
             if libre:
-                return inicio, fin
-
-            inicio += timedelta(minutes=15)
+                return slot, end_slot
+            slot += timedelta(minutes=15)
 
     except Exception as e:
         logger.error(f"❌ Error buscando disponibilidad: {e}")
@@ -71,8 +89,11 @@ def buscar_espacio_disponible(duracion_min=30):
     return None, None
 
 def crear_evento(nombre, descripcion, fecha_str, hora_str, duracion_min=30, recordatorio=False):
-    if not service:
-        return None
+    """
+    Crea el evento: obtiene internamente el servicio y no depende
+    de una variable global inexistente.
+    """
+    service = get_service()
 
     try:
         fecha = datetime.strptime(f"{fecha_str} {hora_str}", "%Y-%m-%d %H:%M")
@@ -93,8 +114,8 @@ def crear_evento(nombre, descripcion, fecha_str, hora_str, duracion_min=30, reco
             } if recordatorio else {'useDefault': False}
         }
 
-        evento_creado = service.events().insert(calendarId=CALENDAR_ID, body=evento).execute()
-        link = evento_creado.get('htmlLink')
+        creado = service.events().insert(calendarId=CALENDAR_ID, body=evento).execute()
+        link = creado.get('htmlLink')
         logger.info(f"✅ Evento creado: {link}")
         return link
 
