@@ -17,10 +17,8 @@ def get_service():
     """
     Crea y devuelve el cliente de la API de Calendar.
     """
-    creds = Credentials.from_service_account_file(
-        SERVICE_ACCOUNT_FILE,
-        scopes=SCOPES
-    )
+    credenciales_dict = json.loads(os.environ["GOOGLE_CREDS_JSON"])
+    creds = Credentials.from_service_account_info(credenciales_dict, scopes=SCOPES)
     return build('calendar', 'v3', credentials=creds)
 
 def verificar_ocupado(service, inicio, fin):
