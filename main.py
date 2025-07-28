@@ -297,3 +297,6 @@ def webhook():
     except Exception as e:
         logging.exception("❌ Error en webhook:")
         return Response("Error interno", status=500)
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
