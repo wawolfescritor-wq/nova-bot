@@ -19,7 +19,12 @@ logging.basicConfig(filename='nova.log', level=logging.INFO)
 
 # Google Sheets
 SCOPE = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-CREDS = ServiceAccountCredentials.from_json_keyfile_name("credenciales.json", SCOPE)
+import json
+import os
+from oauth2client.service_account import ServiceAccountCredentials
+
+credenciales_dict = json.loads(os.environ["GOOGLE_CREDS_JSON"])
+CREDS = ServiceAccountCredentials.from_json_keyfile_dict(credenciales_dict, SCOPE)
 client = gspread.authorize(CREDS)
 sheet = None
 try:
