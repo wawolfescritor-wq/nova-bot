@@ -13,6 +13,7 @@ import subprocess
 import re
 import time
 import os
+import json
 
 app = Flask(__name__)
 logging.basicConfig(filename='nova.log', level=logging.INFO)
@@ -75,6 +76,8 @@ def webhook():
         respuesta = ""
         libre = True  # Variable definida por defecto
 
+        logging.info(f"[🔄 ESTADO ACTUAL: {estado}] Usuario: {numero}")
+
         # Comandos especiales
         if normalizado == "inicio":
             user.update({k: "" for k in ["nombre", "tipo_bot", "sector", "funcionalidades", "medio_contacto", "enlace_evento", "fecha_cita"]})
@@ -92,6 +95,7 @@ def webhook():
 
         # Procesamiento por estado
         if estado == "esperando_nombre":
+            logging.info(f"[👣 ESTADO: esperando_nombre] Mensaje de {numero}: {mensaje}")
             if mensaje:
                 user["estado_anterior"] = estado
                 user["nombre"] = mensaje.split()[0].capitalize()
@@ -270,6 +274,12 @@ def webhook():
                 )
             user["estado_anterior"] = estado
             user["estado"] = "despedida"
+        elif estado == "despedida" and not respuesta:
+            respuesta = (
+                "🙏 Gracias por tomarte el tiempo para conversar conmigo.\n"
+                "📞 Si en el futuro deseas retomar, puedes escribirme *inicio* y comenzamos desde cero.\n"
+                "¡Muchos éxitos con tu proyecto! 🌟"
+            )
 
         # Guardar en Google Sheets
         if sheet and not user["guardado"] and user["estado"] in ["mostrar_planes", "preguntar_medio_contacto", "recordatorio_permiso", "despedida"]:
@@ -289,8 +299,11 @@ def webhook():
 
         # Mensaje por defecto si no hay respuesta
         if not respuesta:
-            respuesta = "Lo siento, no entendí. Puedes escribir *inicio* para comenzar o *atrás* para retroceder."
-
+            logging.warning(f"[⚠️ Sin respuesta] Estado: {estado}, mensaje: '{mensaje}' de {numero}")
+            respuesta = (
+                "😅 No entendí lo que dijiste. Puedes escribir *inicio* para comenzar de nuevo o *atrás* para retroceder.\n"
+                "Estoy aquí para ayudarte. ✨"
+            )
         twiml.message(respuesta)
         return Response(str(twiml), mimetype="application/xml")
 
