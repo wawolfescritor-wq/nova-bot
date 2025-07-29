@@ -309,8 +309,13 @@ def webhook():
         from flask import make_response
         from twilio.twiml.messaging_response import MessagingResponse
 
-        twiml = MessagingResponse()
+        from flask import make_response
+
         twiml.message(respuesta)
+        response = make_response(str(twiml))
+        response.headers["Content-Type"] = "application/xml"
+        logging.debug(f"[📤 TwiML XML enviado] -> {str(twiml)}")
+        return response
 
         response = make_response(str(twiml))
         response.headers["Content-Type"] = "application/xml"
