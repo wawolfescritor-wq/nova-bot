@@ -323,7 +323,7 @@ def webhook():
 
 
     except Exception as e:
-        logging.exception("❌ Error en webhook:")
+        logging.exception(f"❌ Error en webhook: {e}")
         return Response("Error interno", status=500)
 @app.route("/", methods=["GET"])
 def index():
