@@ -306,8 +306,16 @@ def webhook():
                 "😅 No entendí lo que dijiste. Puedes escribir *inicio* para comenzar de nuevo o *atrás* para retroceder.\n"
                 "Estoy aquí para ayudarte. ✨"
             )
+        from flask import make_response
+        from twilio.twiml.messaging_response import MessagingResponse
+
+        twiml = MessagingResponse()
         twiml.message(respuesta)
-        return Response(str(twiml), mimetype="application/xml")
+
+        response = make_response(str(twiml))
+        response.headers["Content-Type"] = "application/xml"
+        return response
+
 
     except Exception as e:
         logging.exception("❌ Error en webhook:")
