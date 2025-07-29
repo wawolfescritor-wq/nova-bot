@@ -113,6 +113,8 @@ def webhook():
             else:
                 respuesta = "¿Me dices tu nombre, por favor?"
 
+            logging.info(f"[📤 RESPUESTA esperando_nombre] -> {respuesta}")
+
         elif estado == "seleccion_tipo_bot":
             opciones = {
                 "1": "Asistente virtual", "2": "Agendador de citas",
