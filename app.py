@@ -220,6 +220,7 @@ def webhook():
                     libre = True  # En caso de error asumimos disponible
 
                 if libre:
+                    # Agendar la cita
                     nombre = user.get("nombre", "Cliente")
                     tipo = user.get("tipo_bot", "bot")
                     funciones = user.get("funcionalidades", "funciones")
@@ -246,12 +247,46 @@ def webhook():
                         "¿Quieres que te recuerde la cita un día antes y dos horas antes? (sí/no)"
                     )
                 else:
-                    # Sugerir nueva fecha si está ocupado
-                    sugerido = buscar_espacio_disponible(service, inicio)
+                    # Buscar próxima hora libre que esté al menos a 1 hora de distancia de otras citas
+                    sugerido = None
+                    for i in range(1, 48):  # Buscar en las próximas 48 medias horas (~1 día)
+                        nuevo_inicio = inicio + timedelta(minutes=30 * i)
+                        nuevo_fin = nuevo_inicio + timedelta(minutes=30)
+
+                        try:
+                            ocupado_nuevo = service.freebusy().query(body={
+                                "timeMin": (nuevo_inicio - timedelta(minutes=60)).isoformat(),
+                                "timeMax": (nuevo_fin + timedelta(minutes=60)).isoformat(),
+                                "items": [{"id": "primary"}]
+                            }).execute()
+
+                            eventos_nuevo = ocupado_nuevo["calendars"]["primary"].get("busy", [])
+                            hay_conflicto = False
+                            for evento in eventos_nuevo:
+                                start = dateparser.parse(evento["start"])
+                                end = dateparser.parse(evento["end"])
+                                if (nuevo_inicio < end + timedelta(minutes=60)) and (nuevo_fin > start - timedelta(minutes=60)):
+                                    hay_conflicto = True
+                                    break
+
+                            if not hay_conflicto:
+                                sugerido = nuevo_inicio
+                                break
+
+                        except Exception as e:
+                            logging.warning(f"⚠️ Error buscando sugerencia: {e}")
+                            break
+
                     if sugerido:
-                        respuesta = f"Ya hay una cita en ese horario 😕. ¿Qué tal este?: {sugerido.strftime('%A %d %B %I:%M %p')} (responde con sí o no)"
+                        respuesta = (
+                            "😬 Ya tengo una cita cercana a esa hora.\n"
+                            f"¿Te parece bien esta alternativa?: {sugerido.strftime('%A %d de %B a las %I:%M %p')} (responde con *sí* o intenta otra fecha)"
+                        )
                     else:
-                        respuesta = "No se encontró un espacio libre cercano, intenta con otra fecha por favor."
+                        respuesta = (
+                            "🚫 No conseguí una hora libre cercana sin interferencias.\n"
+                            "Por favor intenta con otra fecha y hora."
+                        )
 
         elif estado == "recordatorio_permiso":
             if es_afirmativo(mensaje):

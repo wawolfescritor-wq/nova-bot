@@ -1,5 +1,7 @@
 # agenda_google.py (versión corregida)
 
+from dotenv import load_dotenv
+load_dotenv()
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 from datetime import datetime, timedelta
@@ -19,7 +21,7 @@ def get_service():
     Crea y devuelve el cliente de la API de Calendar.
     """
     credenciales_dict = json.loads(os.environ["GOOGLE_CREDS_JSON"])
-    creds = Credentials.from_service_account_info(credenciales_dict, scopes=SCOPES)
+    creds = Credentials.from_service_account_file("credenciales.json", scopes=SCOPES)
     return build('calendar', 'v3', credentials=creds)
 
 def verificar_ocupado(service, inicio, fin):

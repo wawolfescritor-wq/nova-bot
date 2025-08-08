@@ -1,3 +1,4 @@
+# app.py (versión corregida con simulación de respuesta en el mismo hilo)
 from flask import Flask, request, Response
 from twilio.twiml.messaging_response import MessagingResponse
 from unidecode import unidecode
@@ -13,19 +14,13 @@ import subprocess
 import re
 import time
 import os
-import json
 
 app = Flask(__name__)
 logging.basicConfig(filename='nova.log', level=logging.INFO)
 
 # Google Sheets
 SCOPE = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-import json
-import os
-from oauth2client.service_account import ServiceAccountCredentials
-
-credenciales_dict = json.loads(os.environ["GOOGLE_CREDS_JSON"])
-CREDS = ServiceAccountCredentials.from_json_keyfile_dict(credenciales_dict, SCOPE)
+CREDS = ServiceAccountCredentials.from_json_keyfile_name("credenciales.json", SCOPE)
 client = gspread.authorize(CREDS)
 sheet = None
 try:
@@ -76,8 +71,6 @@ def webhook():
         respuesta = ""
         libre = True  # Variable definida por defecto
 
-        logging.info(f"[🔄 ESTADO ACTUAL: {estado}] Usuario: {numero}")
-
         # Comandos especiales
         if normalizado == "inicio":
             user.update({k: "" for k in ["nombre", "tipo_bot", "sector", "funcionalidades", "medio_contacto", "enlace_evento", "fecha_cita"]})
@@ -95,7 +88,6 @@ def webhook():
 
         # Procesamiento por estado
         if estado == "esperando_nombre":
-            logging.info(f"[👣 ESTADO: esperando_nombre] Mensaje de {numero}: {mensaje}")
             if mensaje:
                 user["estado_anterior"] = estado
                 user["nombre"] = mensaje.split()[0].capitalize()
@@ -112,8 +104,6 @@ def webhook():
                 )
             else:
                 respuesta = "¿Me dices tu nombre, por favor?"
-
-            logging.info(f"[📤 RESPUESTA esperando_nombre] -> {respuesta}")
 
         elif estado == "seleccion_tipo_bot":
             opciones = {
@@ -230,6 +220,7 @@ def webhook():
                     libre = True  # En caso de error asumimos disponible
 
                 if libre:
+                    # Agendar la cita
                     nombre = user.get("nombre", "Cliente")
                     tipo = user.get("tipo_bot", "bot")
                     funciones = user.get("funcionalidades", "funciones")
@@ -256,12 +247,46 @@ def webhook():
                         "¿Quieres que te recuerde la cita un día antes y dos horas antes? (sí/no)"
                     )
                 else:
-                    # Sugerir nueva fecha si está ocupado
-                    sugerido = buscar_espacio_disponible(service, inicio)
+                    # Buscar próxima hora libre que esté al menos a 1 hora de distancia de otras citas
+                    sugerido = None
+                    for i in range(1, 48):  # Buscar en las próximas 48 medias horas (~1 día)
+                        nuevo_inicio = inicio + timedelta(minutes=30 * i)
+                        nuevo_fin = nuevo_inicio + timedelta(minutes=30)
+
+                        try:
+                            ocupado_nuevo = service.freebusy().query(body={
+                                "timeMin": (nuevo_inicio - timedelta(minutes=60)).isoformat(),
+                                "timeMax": (nuevo_fin + timedelta(minutes=60)).isoformat(),
+                                "items": [{"id": "primary"}]
+                            }).execute()
+
+                            eventos_nuevo = ocupado_nuevo["calendars"]["primary"].get("busy", [])
+                            hay_conflicto = False
+                            for evento in eventos_nuevo:
+                                start = dateparser.parse(evento["start"])
+                                end = dateparser.parse(evento["end"])
+                                if (nuevo_inicio < end + timedelta(minutes=60)) and (nuevo_fin > start - timedelta(minutes=60)):
+                                    hay_conflicto = True
+                                    break
+
+                            if not hay_conflicto:
+                                sugerido = nuevo_inicio
+                                break
+
+                        except Exception as e:
+                            logging.warning(f"⚠️ Error buscando sugerencia: {e}")
+                            break
+
                     if sugerido:
-                        respuesta = f"Ya hay una cita en ese horario 😕. ¿Qué tal este?: {sugerido.strftime('%A %d %B %I:%M %p')} (responde con sí o no)"
+                        respuesta = (
+                            "😬 Ya tengo una cita cercana a esa hora.\n"
+                            f"¿Te parece bien esta alternativa?: {sugerido.strftime('%A %d de %B a las %I:%M %p')} (responde con *sí* o intenta otra fecha)"
+                        )
                     else:
-                        respuesta = "No se encontró un espacio libre cercano, intenta con otra fecha por favor."
+                        respuesta = (
+                            "🚫 No conseguí una hora libre cercana sin interferencias.\n"
+                            "Por favor intenta con otra fecha y hora."
+                        )
 
         elif estado == "recordatorio_permiso":
             if es_afirmativo(mensaje):
@@ -276,12 +301,6 @@ def webhook():
                 )
             user["estado_anterior"] = estado
             user["estado"] = "despedida"
-        elif estado == "despedida" and not respuesta:
-            respuesta = (
-                "🙏 Gracias por tomarte el tiempo para conversar conmigo.\n"
-                "📞 Si en el futuro deseas retomar, puedes escribirme *inicio* y comenzamos desde cero.\n"
-                "¡Muchos éxitos con tu proyecto! 🌟"
-            )
 
         # Guardar en Google Sheets
         if sheet and not user["guardado"] and user["estado"] in ["mostrar_planes", "preguntar_medio_contacto", "recordatorio_permiso", "despedida"]:
@@ -301,34 +320,21 @@ def webhook():
 
         # Mensaje por defecto si no hay respuesta
         if not respuesta:
-            logging.warning(f"[⚠️ Sin respuesta] Estado: {estado}, mensaje: '{mensaje}' de {numero}")
-            respuesta = (
-                "😅 No entendí lo que dijiste. Puedes escribir *inicio* para comenzar de nuevo o *atrás* para retroceder.\n"
-                "Estoy aquí para ayudarte. ✨"
-            )
-        from flask import make_response
-        from twilio.twiml.messaging_response import MessagingResponse
-
-        from flask import make_response
+            respuesta = "Lo siento, no entendí. Puedes escribir *inicio* para comenzar o *atrás* para retroceder."
 
         twiml.message(respuesta)
-        response = make_response(str(twiml))
-        response.headers["Content-Type"] = "application/xml"
-        logging.debug(f"[📤 TwiML XML enviado] -> {str(twiml)}")
-        return response
-
-        response = make_response(str(twiml))
-        response.headers["Content-Type"] = "application/xml"
-        return response
-
+        return Response(str(twiml), mimetype="application/xml")
 
     except Exception as e:
-        logging.exception(f"❌ Error en webhook: {e}")
+        logging.exception("❌ Error en webhook:")
         return Response("Error interno", status=500)
-@app.route("/", methods=["GET"])
-def index():
-    return "NOVA está activa 🚀"
 
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
+def iniciar_tunel_localtunnel():
+    print("⏳ Iniciando LocalTunnel...")
+    npx_path = r"C:\Program Files\nodejs\npx.cmd"  # Asegúrate de que esta ruta sea correcta para tu sistema
+    proceso = subprocess.Popen(
+        [npx_path, "lt", "--port", "5000"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        universal_newlines=True
+    )
